@@ -1,6 +1,8 @@
 # Advanced-DMT
 Code release for the paper "Advanced Discriminative Co-Saliency and Background Mining Transformer for Co-Salient Object Detection" by Long Li, Huichao Xie, Nian Liu, Dingwen Zhang, Rao Muhammad Anwer, Hisham Cholakkal, and Junwei Han.
 
+![avatar](framework.jpg)
+
 ## Training model
 1. Download the pretrained VGG model from [Baidu Driver](https://pan.baidu.com/s/173-1VToeumXZy90cRw-Yqw)(sqd5) and put it into `./checkpoints` folder.
 2. Run `python train.py`. 
