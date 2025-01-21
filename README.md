@@ -47,3 +47,5 @@ Download the dataset from [Baidu Driver](https://pan.baidu.com/s/192MnRSgXSDXb0l
 The prediction results for CoCA, CoSal2015, CoSOD3k, OWCoCA, OWCoSal, OWCoSOD can be download from [prediction](https://pan.baidu.com/s/1lxaxWPNAwha5nIEdfrGooQ?pwd=skmb) (skmb).
 ### Conventional CoSOD
 
+![avatar](table8.jpg)
+
