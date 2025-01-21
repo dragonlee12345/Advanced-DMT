@@ -10,6 +10,7 @@ paper proposes a Discriminative co-saliency and background Mining Transformer fr
 
 ## Result
 The prediction results for CoCA, CoSal2015, CoSOD3k, OWCoCA, OWCoSal, OWCoSOD can be download from [prediction](https://pan.baidu.com/s/1lxaxWPNAwha5nIEdfrGooQ?pwd=skmb) (skmb).
+
 ![avatar](table8.jpg)
 
 ![avatar](figure11.jpg)
