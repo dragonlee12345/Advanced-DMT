@@ -3,7 +3,6 @@ import torch
 from einops import rearrange
 
 import torch.nn.functional as F
-from icecream import ic
 
 
 class Correlation:

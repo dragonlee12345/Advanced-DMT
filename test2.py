@@ -14,17 +14,14 @@ import transforms as trans
 import cv2
 import evaluation.metric as M
 
-
 def get_metric_function():
     return {
         'FM': M.Fmeasure_and_FNR(),
         'WFM': M.WeightedFmeasure(),
         'SM': M.Smeasure(),
         'EM': M.Emeasure(),
-        'MAE': M.MAE(),
-        'MIOU': M.mIoU()
+        'MAE': M.MAE()
     }
-
 
 def get_args_parser():
     """
@@ -34,18 +31,16 @@ def get_args_parser():
     parser = argparse.ArgumentParser("CoSOD_Test", add_help=False)
     parser.add_argument("-config_file", default="./config/cosod.yaml", metavar="FILE",
                         help="path to config file")
-    parser.add_argument("-model", default="DMT+O", help="choose from ['DMT+', 'DMT+O'], DMT+ is our proposed advanced DMT,"
-                                                       "DMT+O is our application model on open-world scenarios.")
+    parser.add_argument("-num_works", default=1, type=int)
     parser.add_argument("-batch_size", default=1, type=int)
     parser.add_argument("-device_id", type=str, default="0")
     parser.add_argument("-img_size", type=int, default=256)
     parser.add_argument("-max_num", type=int, default=25)
     parser.add_argument("-model_root_dir", default="./checkpoints")
-    parser.add_argument("-test_data_root", type=str, default="./dataset/test_data")
-    parser.add_argument("-test_datasets", nargs='+', default=["CoCA", "CoSal2015", "CoSOD3k"])
+    parser.add_argument("-test_data_root", type=str, default="/l/users/nian.liu/co-segmentation/Dataset")
+    parser.add_argument("-test_datasets", nargs='+', default=["OWCoCA", "OWCoSal", "OWCoSOD"])
     parser.add_argument("-save_dir", type=str, default='./Predictions')
-    parser.add_argument("-test_model_name", type=str, default="DMT_plus_O.pth",
-                        help="choose from ['DMT_plus_DC+C9.pth', 'DMT_plus_DC+CS.pth', 'DMT_plus_DC.pth', 'DMT_plus_C9.pth', 'DMT_plus_O.pth']")
+    parser.add_argument("-test_model_name", type=str, default="DMT_plus_O_2.pth")
     return parser
 
 
@@ -107,11 +102,10 @@ def test_group(model, group_data, save_root, max_num):
 
 def main(args):
     cfg = _get_cfg(args.config_file)
-    model = CoSODNet(args, cfg)
+    model = CoSODNet(cfg)
     model.cuda()
 
-    model_name = os.path.abspath('').split('/')[-1]
-    model_dir = os.path.join(args.model_root_dir, args.model, args.test_model_name)
+    model_dir = os.path.join(args.model_root_dir, "DMT+O", args.test_model_name)
 
     print(model_dir)
     model.load_state_dict(torch.load(model_dir))
@@ -119,7 +113,7 @@ def main(args):
     test_loaders = build_data_loader(args, mode='test')
 
     for dataset, data_loader in test_loaders.items():
-        save_root = os.path.join(args.save_dir, dataset, args.test_model_name)
+        save_root = os.path.join(args.save_dir, dataset, '{}'.format("DMT+O"))
         print("testing on {}".format(dataset))
 
         for idx_, group_data in enumerate(data_loader):
@@ -141,48 +135,47 @@ def main(args):
                         break
                     continue
 
-        dataset_list = args.test_datasets
-        data_root = args.test_data_root
-        pred_root = args.save_dir
-        for i in range(len(dataset_list)):
-            dataset = dataset_list[i]
-            print('evaluating on {} dataset.'.format(dataset))
+    dataset_list = args.test_datasets
+    data_root = args.test_data_root
+    pred_root = args.save_dir
+    for i in range(len(dataset_list)):
+        dataset = dataset_list[i]
+        print('evaluating on {} dataset.'.format(dataset))
 
-            pred_data_dir = os.path.join(pred_root, dataset)
-            label_data_dir = os.path.join(data_root, dataset, 'GroundTruth')
+        pred_data_dir = os.path.join(pred_root, dataset)
+        label_data_dir = os.path.join(data_root, dataset, 'GroundTruth')
 
-            log_file = open('./evaluation/result/{}.txt'.format(dataset), 'a')
+        log_file = open('./evaluation/result/{}.txt'.format(dataset), 'a')
 
-            mertic_fun = get_metric_function()
+        mertic_fun = get_metric_function()
 
-            classes = os.listdir(label_data_dir)
-            for k in range(len(classes)):
-                print('\r{}/{}'.format(k, len(classes)), end="", flush=True)
-                class_name = classes[k]
-                img_list = os.listdir(os.path.join(label_data_dir, class_name))
-                for l in range(len(img_list)):
-                    img_name = img_list[l]
-                    # print("{}/{}".format(class_name, img_name))
-                    pred = cv2.imread(os.path.join(pred_data_dir, args.test_model_name, class_name, img_name), 0)
-                    gt = cv2.imread(os.path.join(label_data_dir, class_name, img_name[:-4] + '.png'), 0)
-                    for _, fun in mertic_fun.items():
-                        fun.step(pred=pred / 255, gt=gt / 255)
+        classes = os.listdir(label_data_dir)
+        for k in range(len(classes)):
+            print('\r{}/{}'.format(k, len(classes)), end="", flush=True)
+            class_name = classes[k]
+            img_list = os.listdir(os.path.join(label_data_dir, class_name))
+            for l in range(len(img_list)):
+                img_name = img_list[l]
+                # print("{}/{}".format(class_name, img_name))
+                pred = cv2.imread(os.path.join(pred_data_dir, "DMT+O", class_name, img_name), 0)
+                gt = cv2.imread(os.path.join(label_data_dir, class_name, img_name[:-4] + '.png'), 0)
+                for _, fun in mertic_fun.items():
+                    fun.step(pred=pred / 255, gt=gt / 255)
 
-            fm = mertic_fun['FM'].get_results()[0]['fm']
-            wfm = mertic_fun['WFM'].get_results()['wfm']
-            sm = mertic_fun['SM'].get_results()['sm']
-            em = mertic_fun['EM'].get_results()['em']
-            mae = mertic_fun['MAE'].get_results()['mae']
-            fnr = mertic_fun['FM'].get_results()[1]
-            miou = mertic_fun['MIOU'].get_results()['miou']
+        fm = mertic_fun['FM'].get_results()[0]['fm']
+        wfm = mertic_fun['WFM'].get_results()['wfm']
+        sm = mertic_fun['SM'].get_results()['sm']
+        em = mertic_fun['EM'].get_results()['em']
+        mae = mertic_fun['MAE'].get_results()['mae']
+        fnr = mertic_fun['FM'].get_results()[1]
 
-            eval_res = '{}: Smeasure:{:.4f} || meanEm:{:.4f} || adpEm:{:.4f} || maxEm:{:.4f} || wFmeasure:{:.4f} || ' \
-                       'adpFm:{:.4f} || meanFm:{:.4f} || maxFm:{:.4f} ||  MAE:{:.4f} || fnr:{:.4f} || miou:{:.4f}'.format(
-                args.test_model_name, sm, em['curve'].mean(), em['adp'], em['curve'].max(), wfm, fm['adp'],
-                fm['curve'].mean(), fm['curve'].max(), mae, fnr, miou)
-            print(eval_res+"\n")
-            log_file.write(eval_res + '\n')
-            log_file.close()
+        eval_res = '{}: Smeasure:{:.4f} || meanEm:{:.4f} || adpEm:{:.4f} || maxEm:{:.4f} || wFmeasure:{:.4f} || ' \
+                   'adpFm:{:.4f} || meanFm:{:.4f} || maxFm:{:.4f} ||  MAE:{:.4f} || fnr:{:.4f}'.format(
+            args.test_model_name, sm, em['curve'].mean(), em['adp'], em['curve'].max(), wfm, fm['adp'],
+            fm['curve'].mean(), fm['curve'].max(), mae, fnr)
+        print(eval_res+"\n")
+        log_file.write(eval_res + '\n')
+        log_file.close()
 
 
 if __name__ == '__main__':

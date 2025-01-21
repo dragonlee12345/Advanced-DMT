@@ -44,7 +44,7 @@ class Scale(object):
 
     def __call__(self, input):
         input['img'] = self._scale(input['img'])
-        input['co_gt'] = self._scale(input['co_gt'])
+        input['gt'] = self._scale(input['gt'])
         return input
 
 
@@ -63,7 +63,7 @@ class Random_Crop(object):
             x1 = random.randint(0, w - self.t_size)
             y1 = random.randint(0, h - self.t_size)
             input['img'] = self._crop(img, x1, y1, x1 + self.t_size, y1 + self.t_size)
-            input['co_gt'] = self._crop(input['co_gt'], x1, y1, x1 + self.t_size, y1 + self.t_size)
+            input['gt'] = self._crop(input['gt'], x1, y1, x1 + self.t_size, y1 + self.t_size)
 
         return input
 
@@ -75,7 +75,7 @@ class Random_Flip(object):
     def __call__(self, input):
         if random.random() < 0.5:
            input['img'] = self._flip(input['img'])
-           input['co_gt'] = self._flip(input['co_gt'])
+           input['gt'] = self._flip(input['gt'])
 
         return input
 
@@ -111,51 +111,68 @@ class normalization(object):
     def __call__(self, input):
         if self.split == 'train':
             input['img'] = self.img_transform(input['img'])
-            input['co_gt'] = self.gt_transform(input['co_gt'])
+            input['gt'] = self.gt_transform(input['gt'])
         elif self.split == 'test':
             input = self.img_transform(input)
         return input
+
+
+dataset_dirs = {
+    "DC": "./dataset/train_data/DUTS_class/img",
+    "C9": "./dataset/train_data/CoCo9k/img",
+    "CS": "./dataset/train_data/CoCoSeg/img",
+    "OWDC": "./dataset/train_data/OWDUTS_class/img",
+    "OWCS": "./dataset/train_data/OWCoCo_Seg/img",
+}
 
 
 class CoSOD_Train(data.Dataset):
     def __init__(self, args, split='train'):
         self.split = split
 
-        self.imgs_dirs_list = self.get_imgs_dirs(args.img_root)
-        self.co_gts_dirs_list = self.get_align_imgs_dirs(args.co_gt_root)
+        self.train_data_set = args.train_data_set.split('+')
 
-        self.nclass = len(self.imgs_dirs_list)
+        if args.model == "DMT+O":
+            self.train_data_set = ['OWDC', 'OWCS']
 
-        self.coco_imgs_dirs_list = self.get_imgs_dirs(args.img_root_coco)
-        self.coco_co_gts_dirs_list = self.get_align_coco_imgs_dirs(args.co_gt_root_coco)
-        self.nclass_coco = len(self.coco_imgs_dirs_list)
-
-        self.all_imgs_dirs_list = self.imgs_dirs_list + self.coco_imgs_dirs_list
-        self.all_co_gts_dirs_list = self.co_gts_dirs_list + self.coco_co_gts_dirs_list
-        self.data_flag = ["DUTS" for i in range(self.nclass)] + ["CoCo" for i in range(self.nclass_coco)]
-
-        self.all_ncalss = len(self.all_imgs_dirs_list)
+        self.all_imgs_dirs_list, self.all_gts_dirs_list, self.data_flag = [], [], []
+        for dataset in self.train_data_set:
+            imgs_dirs_list, gts_dirs_list = self.get_imgs_gts_dirs(dataset_dirs[dataset])
+            if "DC" in self.train_data_set or "OWDC" in self.train_data_set:
+                if dataset == "DC" or dataset == "OWDC":
+                    data_flag = [True for i in range(len(imgs_dirs_list))]
+                else:
+                    data_flag = [False for i in range(len(imgs_dirs_list))]
+            elif "C9" in self.train_data_set and dataset == "C9":
+                data_flag = [True for i in range(len(imgs_dirs_list))]
+            else:
+                data_flag = [False for i in range(len(imgs_dirs_list))]
+            self.all_imgs_dirs_list += imgs_dirs_list
+            self.all_gts_dirs_list += gts_dirs_list
+            self.data_flag += data_flag
 
         inds = [i for i in range(len(self.all_imgs_dirs_list))]
         np.random.shuffle(inds)
 
         self.all_imgs_dirs_list = [self.all_imgs_dirs_list[i] for i in inds]
-        self.all_co_gts_dirs_list = [self.all_co_gts_dirs_list[i] for i in inds]
+        self.all_gts_dirs_list = [self.all_gts_dirs_list[i] for i in inds]
         self.data_flag = [self.data_flag[i] for i in inds]
 
-        self.train_w_coco_prob = args.train_w_coco_prob
         self.max_num = args.max_num
 
         self.size = args.img_size
         self.scale_size = args.scale_size
 
-        self.img_syn_root = args.img_syn_root
-        self.img_rev_syn_root = args.img_rev_syn_root
-        self.co_gt_rev_syn_root = args.co_gt_rev_syn_root
+        if "DC" in self.train_data_set:
+            self.syn_root = '/'.join(dataset_dirs["DC"].split('/')[:-1]) + "_syn"
+        elif "OWDC" in self.train_data_set:
+            self.syn_root = '/'.join(dataset_dirs["DC"].split('/')[:-1]) + "_syn"
+        elif "C9" in self.train_data_set:
+            self.syn_root = '/'.join(dataset_dirs["C9"].split('/')[:-1]) + "_syn"
 
         self._augmentation()
 
-    def get_imgs_dirs(self, root):
+    def get_imgs_gts_dirs(self, root):
         class_names = os.listdir(root)
         classes_dir = list(
             map(lambda class_name: os.path.join(root, class_name), class_names)
@@ -170,35 +187,17 @@ class CoSOD_Train(data.Dataset):
             )
             for idx in range(len(classes_dir))
         ]
-        return imgs_dirs_list
-
-    def get_align_imgs_dirs(self, root):
-        imgs_dirs_list = []
-        for i in range(len(self.imgs_dirs_list)):
-            imgs_dir = []
-            align_imgs_dir = self.imgs_dirs_list[i]
-            for j in range(len(align_imgs_dir)):
-                img_dir = align_imgs_dir[j].split('/')[-2:]
-                img_dir.insert(0, root)
-                img_dir = '/'.join(img_dir)
-                img_dir = img_dir[:-4]+'.png'
-                imgs_dir.append(img_dir)
-            imgs_dirs_list.append(imgs_dir)
-        return imgs_dirs_list
-
-    def get_align_coco_imgs_dirs(self, root):
-        coco_imgs_dirs_list = []
-        for i in range(len(self.coco_imgs_dirs_list)):
-            coco_imgs_dir = []
-            align_coco_imgs_dir = self.coco_imgs_dirs_list[i]
-            for j in range(len(align_coco_imgs_dir)):
-                coco_img_dir = align_coco_imgs_dir[j].split('/')[-2:]
-                coco_img_dir.insert(0, root)
-                coco_img_dir = '/'.join(coco_img_dir)
-                # coco_img_dir = coco_img_dir[:-4]+'.png'
-                coco_imgs_dir.append(coco_img_dir)
-            coco_imgs_dirs_list.append(coco_imgs_dir)
-        return coco_imgs_dirs_list
+        if 'CoCo_Seg' in root:
+            gts_dirs_list = [
+                [img.replace('img', 'gt') for img in sublist]
+                for sublist in imgs_dirs_list
+            ]
+        else:
+            gts_dirs_list = [
+                [img.replace('img', 'gt').replace('jpg', 'png') for img in sublist]
+                for sublist in imgs_dirs_list
+            ]
+        return imgs_dirs_list, gts_dirs_list
 
     def _augmentation(self):
         if self.split == 'train':
@@ -215,19 +214,19 @@ class CoSOD_Train(data.Dataset):
 
     def __getitem__(self, item):
         imgs_path = self.all_imgs_dirs_list[item]
-        co_gts_path = self.all_co_gts_dirs_list[item]
-        flag = True if self.data_flag[item] == "DUTS" else False
+        gts_path = self.all_gts_dirs_list[item]
+
+        flag = self.data_flag[item]
 
         num = len(imgs_path)
         if num > self.max_num:
             sample_list = random.sample(range(num), self.max_num)
             imgs_path = [imgs_path[i] for i in sample_list]
-            co_gts_path = [co_gts_path[i] for i in sample_list]
+            gts_path = [gts_path[i] for i in sample_list]
             num = self.max_num
 
         imgs = torch.zeros(num, 3, self.size, self.size)
-        co_gts = torch.zeros(num, 1, self.size, self.size)
-        sal_gts = torch.zeros(num, 1, self.size, self.size)
+        gts = torch.zeros(num, 1, self.size, self.size)
 
         ori_sizes = []
 
@@ -239,52 +238,60 @@ class CoSOD_Train(data.Dataset):
                 if select_num == 4:
                     # select original img
                     img_path = imgs_path[idx]
-                    co_gt_path = co_gts_path[idx]
+                    gt_path = gts_path[idx]
                 if 1 <= select_num <= 3:
                     # select syn img
                     imgs_path_split = imgs_path[idx].split('/')
                     class_name, img_name = imgs_path_split[-2], imgs_path_split[-1]
                     syn_img_name = img_name[:-4] + '_syn' + str(select_num) + '.png'
-                    img_path = os.path.join(self.img_syn_root, class_name, syn_img_name)
-                    co_gt_path = co_gts_path[idx]
+                    syn_naive_dir = os.path.join(self.syn_root, "naive")
+                    img_path = os.path.join(syn_naive_dir, "img", class_name, syn_img_name)
+                    if not os.path.exists(img_path):
+                        img_path = imgs_path[idx]
+                    gt_path = gts_path[idx]
                 if select_num == 5:
                     # select reverse syn img
                     select_reverse_num = random.randint(1, 3)
                     imgs_path_split = imgs_path[idx].split('/')
                     class_name, img_name = imgs_path_split[-2], imgs_path_split[-1]
                     rev_syn_img_name = img_name[:-4]+'_ReverseSyn'+str(select_reverse_num)+'.png'
-                    img_path = os.path.join(self.img_rev_syn_root, class_name, rev_syn_img_name)
-                    co_gt_path = os.path.join(self.co_gt_rev_syn_root, class_name, rev_syn_img_name)
+                    syn_reverse_dir = os.path.join(self.syn_root, "reverse")
+                    img_path = os.path.join(syn_reverse_dir, "img", class_name, rev_syn_img_name)
+                    gt_path = os.path.join(syn_reverse_dir, "gt", class_name, rev_syn_img_name)
+                    if not os.path.exists(img_path):
+                        img_path = imgs_path[idx]
+                        gt_path = gts_path[idx]
             else:
                 # data from coco
                 img_path = imgs_path[idx]
-                co_gt_path = co_gts_path[idx]
+                gt_path = gts_path[idx]
 
             zip_data = {}
 
             img = Image.open(img_path).convert('RGB')
-            co_gt = Image.open(co_gt_path).convert('L')
+            gt = Image.open(gt_path).convert('L')
 
             # print(img_path, co_gt_path, sal_gt_path)
 
             ori_sizes.append((img.size[1], img.size[0]))
 
             zip_data['img'] = img
-            zip_data['co_gt'] = co_gt
+            zip_data['gt'] = gt
 
             zip_data = self.joint_transform(zip_data)
             zip_data = self.normalization(zip_data)
 
             imgs[idx] = zip_data['img']
-            co_gts[idx] = zip_data['co_gt']
+            gts[idx] = zip_data['gt']
 
         return {
             "imgs": imgs,
-            "co_gts": co_gts,
+            "gts": gts,
         }
 
     def __len__(self):
         return len(self.all_imgs_dirs_list)
+
 
 class CoData_Test(data.Dataset):
     def __init__(self, img_root, img_size):

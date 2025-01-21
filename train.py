@@ -1,32 +1,28 @@
-import os
+import time
+
 import argparse
-import glob
+import cv2
 import logging
+import os
 import pprint
 import shutil
-import time
-import traceback
-
-import cv2
-
 import torch
+import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.backends.cudnn as cudnn
-from typing import List
+import traceback
 from bisect import bisect_right
-from torch.autograd import Variable
-
 from torch import Tensor
-
-from config.config import get_cfg
-from dataset import build_data_loader
-
-from CoSODNet import CoSODNet
-
-import transforms as trans
+from torch.autograd import Variable
+from typing import List
 
 import evaluation.metric as M
+import transforms as trans
+from config.config import get_cfg
+from dataset import build_data_loader
+from models.CoSODNet import CoSODNet
+
+
 #from ERSR_loss import ERSR
 
 def get_args_parser():
@@ -37,28 +33,20 @@ def get_args_parser():
     parser = argparse.ArgumentParser("CoSOD_Train", add_help=False)
     parser.add_argument("-config_file", default="./config/cosod.yaml", metavar="FILE",
                         help="path to config file")
-    parser.add_argument("-num_works", default=1, type=int)
-    parser.add_argument("--model_name", type=str)
-    parser.add_argument("-model_root_dir", default="./Models",
+    parser.add_argument("-model", default="DMT+", help="choose from ['DMT+', 'DMT+O'], DMT+ is our proposed advanced DMT,"
+                                                       "DMT+O is our application model on open-world scenarios.")
+    parser.add_argument("-model_name", type=str)
+    parser.add_argument("-model_root_dir", default="./checkpoints",
                         help="dir for saving checkpoint")
     parser.add_argument("-batch_size", default=1, type=int)
     parser.add_argument("-device_id", type=str, default="0", help="choose cuda visiable devices")
-    parser.add_argument("-img_root", type=str, default="./dataset/train_data/DUTS_class/img")
-    parser.add_argument("-co_gt_root", type=str, default="./dataset/train_data/DUTS_class/gt")
-
-    parser.add_argument("-img_root_coco", type=str, default="./dataset/train_data/CoCo9k/img")
-    parser.add_argument("-co_gt_root_coco", type=str, default="./dataset/train_data/CoCo9k/gt")
-    parser.add_argument("-img_syn_root", type=str,
-                        default="./dataset/train_data/DUTS_class_syn/img_png_seamless_cloning_add_naive/img")
-    parser.add_argument("-img_rev_syn_root", type=str,
-                        default="./dataset/train_data/DUTS_class_syn/img_png_seamless_cloning_add_naive_reverse_2/img")
-    parser.add_argument("-co_gt_rev_syn_root", type=str,
-                        default="./dataset/train_data/DUTS_class_syn/img_png_seamless_cloning_add_naive_reverse_2/gt")
+    parser.add_argument("-train_data_set", type=str, default="DC",
+                        help="choose from ['DC', 'C9', 'DC+C9', 'DC+CS', 'OWDC+OWCS']")
     parser.add_argument("-test_data_root", type=str, default="./dataset/test_data")
     parser.add_argument("-test_datasets", nargs='+', default=["CoCA"])
     parser.add_argument("-save_dir", type=str, default='./Predictions')
     parser.add_argument("-train_w_coco_prob", type=float, default=0.5)
-    parser.add_argument("-max_num", type=int, default=8)
+    parser.add_argument("-max_num", type=int, default=6)
     parser.add_argument("-test_max_num", type=int, default=25)
     parser.add_argument("-img_size", type=int, default=256)
     parser.add_argument("-scale_size", type=int, default=288)
@@ -242,35 +230,29 @@ class Criterion(nn.Module):
         self.bce = nn.BCEWithLogitsLoss()
 
         self.s_co_bce = 0
-        # self.s_noco_bce = 0
         self.s_bg_bce = 0
         self.s_com_bce = 0
-        self.s_co_1_bce = 0
-        self.s_co_2_bce = 0
+        self.s_tgfr_mid_bce = 0
         self.s_iou = 0
         self.s_iou_com = 0
+        self.s_weight_bce = 0
 
         self.f_co_bce = 0
-        # self.f_noco_bce = 0
         self.f_bg_bce = 0
-        # self.f_com_bce = 0
         self.f_iou = 0
         self.f_iou_com = 0
 
     def reset_loss(self):
         self.s_co_bce = 0
-        # self.s_noco_bce = 0
         self.s_bg_bce = 0
         self.s_com_bce = 0
-        self.s_co_1_bce = 0
-        self.s_co_2_bce = 0
+        self.s_tgfr_mid_bce = 0
         self.s_iou = 0
         self.s_iou_com = 0
+        self.s_weight_bce = 0
 
         self.f_co_bce = 0
-        # self.f_noco_bce = 0
         self.f_bg_bce = 0
-        # self.f_com_bce = 0
         self.f_iou = 0
         self.f_iou_com = 0
 
@@ -285,91 +267,87 @@ class Criterion(nn.Module):
         return loss
 
     def stage_loss(self, stage_co_pred, stage_bg_pred,
-                   stage_com_pred, stage_co_pred_1, stage_co_pred_2, co_gt,
-                   bg_gt):
+                   stage_com_pred, stage_tgfr_mid_pred, co_gt,
+                   bg_gt, all_gt, weight_gt):
+
         pred_size = stage_co_pred.shape[2:]
+        all_gt = F.interpolate(all_gt, size=pred_size, mode="nearest")
         co_gt = F.interpolate(co_gt, size=pred_size, mode="nearest")
-        # noco_gt = F.interpolate(noco_gt, size=pred_size, mode="nearest")
         bg_gt = F.interpolate(bg_gt, size=pred_size, mode="nearest")
 
-        self.s_co_bce += self.bce(stage_co_pred, co_gt)
-        # self.s_noco_bce += self.bce(stage_noco_pred, noco_gt)
+        stage_co_pred = stage_co_pred[weight_gt != 0].unsqueeze(1)
+        stage_bg_pred = stage_bg_pred[weight_gt != 0].unsqueeze(1)
+
+        self.s_co_bce += self.bce(stage_co_pred, all_gt)
         self.s_bg_bce += self.bce(stage_bg_pred, bg_gt)
         self.s_com_bce += self.bce(stage_com_pred, co_gt)
-        self.s_co_1_bce += self.bce(stage_co_pred_1, co_gt)
-        # self.s_co_2_bce += self.bce(stage_co_pred_2, co_gt)
-        self.s_iou += self.iou(stage_co_pred, co_gt)
+        self.s_tgfr_mid_bce += self.bce(stage_tgfr_mid_pred, co_gt)
+        self.s_iou += self.iou(stage_co_pred, all_gt)
         self.s_iou_com += self.iou(stage_com_pred, co_gt)
 
     def average_loss(self, stage_num):
         self.s_co_bce = self.s_co_bce / stage_num
-        # self.s_noco_bce = self.s_noco_bce / stage_num
         self.s_bg_bce = self.s_bg_bce / stage_num
         self.s_com_bce = self.s_com_bce / stage_num
-        self.s_co_1_bce = self.s_co_1_bce / stage_num
-        # self.s_co_2_bce = self.s_co_2_bce / stage_num
+        self.s_tgfr_mid_bce = self.s_tgfr_mid_bce / stage_num
         self.s_iou = self.s_iou / stage_num
         self.s_iou_com = self.s_iou_com / stage_num
 
-    def set_com_zero(self):
-        self.s_com_bce = 0
-        self.s_iou_com = 0
-        self.f_com_bce = 0
-        self.f_iou_com = 0
-
-    def __call__(self, result, co_gt: Tensor, imgs):
+    def __call__(self, result, co_gt, NPS=False):
         self.reset_loss()
+
+        co_pred = result.pop('co_pred')
+        bg_pred = result.pop('bg_pred')
+        com_pred = result.pop('com_pred')
+
+        stage_co_preds = result.pop('stage_co_preds')
+        stage_bg_preds = result.pop('stage_bg_preds')
+        stage_com_preds = result.pop('stage_com_preds')
+        stage_tgfr_mid_preds = result.pop('stage_tgfr_mid_preds')
+
+        stage_num = len(stage_co_preds)
 
         co_gt[co_gt < 0.5] = 0.
         co_gt[co_gt >= 0.5] = 1.
 
-        bg_gt = 1 - co_gt
+        bs = co_gt.shape[0]
+        sum_co_gt = co_gt.view(bs, 1, -1).sum(dim=-1)
+        weight_gt = (sum_co_gt > 0).to(torch.float)
 
-        co_pred = result.pop('co_pred')
-        # noco_pred = result.pop('noco_pred')
-        bg_pred = result.pop('bg_pred')
-        com_pred = result.pop('com_pred')
+        all_gt = co_gt[weight_gt != 0].unsqueeze(1)
+        bg_gt = 1 - all_gt
 
-        self.f_co_bce = self.bce(co_pred, co_gt)
-        # self.f_noco_bce = self.bce(noco_pred, noco_gt)
+        co_pred = co_pred[weight_gt != 0].unsqueeze(1)
+        bg_pred = bg_pred[weight_gt != 0].unsqueeze(1)
+
+        self.f_co_bce = self.bce(co_pred, all_gt)
         self.f_bg_bce = self.bce(bg_pred, bg_gt)
         self.f_com_bce = self.bce(com_pred, co_gt)
-        self.f_iou = self.iou(co_pred, co_gt)
+        self.f_iou = self.iou(co_pred, all_gt)
         self.f_iou_com = self.iou(com_pred, co_gt)
-
-        stage_co_preds = result.pop('stage_co_preds')
-        # stage_noco_preds = result.pop('stage_noco_preds')
-        stage_bg_preds = result.pop('stage_bg_preds')
-        stage_com_preds = result.pop('stage_com_preds')
-        stage_co_preds_1 = result.pop('stage_co_preds_1')
-        # stage_co_preds_2 = result.pop('stage_co_preds_2')
-
-        stage_num = len(stage_co_preds)
 
         for i in range(stage_num):
             self.stage_loss(
                 stage_co_preds[i], stage_bg_preds[i],
-                stage_com_preds[i], stage_co_preds_1[i], None,
-                co_gt, bg_gt
+                stage_com_preds[i], stage_tgfr_mid_preds[i],
+                co_gt, bg_gt, all_gt, weight_gt
             )
 
         self.average_loss(stage_num)
 
-        # loss_ersr = ERSR().cuda()
-        # co_pred = torch.sigmoid(co_pred)
-        # with torch.no_grad():
-        #     mask_edge = get_edge(co_pred)
-        # sample = {'rgb': imgs}
-        # loss_lsc_kernels_desc_defaults = [{"weight": 1, "xy": 6, "rgb": 0.1}]
-        # loss_lsc_radius = 5
-        # lsc_loss = \
-        #     loss_ersr(co_pred, mask_edge, loss_lsc_kernels_desc_defaults, loss_lsc_radius, sample, co_pred.size(2),
-        #               co_pred.size(3))['loss']
+        if NPS:
+            stage_w_masks = result.pop('stage_w_masks')
+            for i in range(len(stage_w_masks)):
+                self.s_weight_bce += self.bce(stage_w_masks[i].squeeze(0), weight_gt)
+            self.s_weight_bce /= len(stage_w_masks)
 
-        self.set_com_zero()
-        loss = self.f_co_bce + self.f_bg_bce + self.f_com_bce + self.f_iou + self.f_iou_com + \
-               self.s_co_bce + self.s_bg_bce + self.s_com_bce + self.s_co_1_bce + \
-               self.s_co_2_bce + self.s_iou + self.s_iou_com
+            loss = self.f_co_bce + self.f_bg_bce + self.f_com_bce + self.f_iou + self.f_iou_com + \
+                   self.s_co_bce + self.s_bg_bce + self.s_com_bce + self.s_tgfr_mid_bce + \
+                   self.s_iou + self.s_iou_com + self.s_weight_bce
+        else:
+            loss = self.f_co_bce + self.f_bg_bce + self.f_com_bce + self.f_iou + self.f_iou_com + \
+                   self.s_co_bce + self.s_bg_bce + self.s_com_bce + self.s_tgfr_mid_bce + \
+                   self.s_iou + self.s_iou_com
 
         return loss
 
@@ -396,7 +374,6 @@ def test_group(model, group_data, save_root, max_num):
         subpaths = group_data['subpaths'][start:end]
         ori_sizes = group_data['ori_sizes'][start:end]
 
-        # img_name = '_'.join(subpaths[0][0][:-4].split('/')).replace(' ', '_')
         with torch.no_grad():
 
             result = model(inputs)
@@ -435,7 +412,6 @@ def main(args):
     logger.info(cfg)
 
     train_loader = build_data_loader(args, mode='train')
-    # exit()
     logger.info('''
     Starting training:
         Train steps: {}
@@ -445,8 +421,7 @@ def main(args):
     '''.format(args.train_steps, args.batch_size, args.lr, len(train_loader.dataset)))
 
     logger.info("=> building model")
-    model = CoSODNet(cfg)
-    model.load_state_dict(torch.load(os.path.join("/l/users/nian.liu/co-segmentation/DMT+O/3_DMT_1x1fea_newcost_cobg/Models/3_DMT_1x1fea_newcost_cobg/iterations30616.pth")))
+    model = CoSODNet(args, cfg)
 
     model.cuda()
     model.train()
@@ -469,11 +444,11 @@ def main(args):
 
         for iteration, data_batch in enumerate(train_loader):
             imgs = Variable(data_batch["imgs"].squeeze(0).cuda())
-            co_gts = Variable(data_batch["co_gts"].squeeze(0).cuda())
+            co_gts = Variable(data_batch["gts"].squeeze(0).cuda())
 
             result = model(imgs)
 
-            loss = cri(result, co_gts, imgs)
+            loss = cri(result, co_gts, NPS=args.model=='DMT+O')
 
             optimizer.zero_grad()
 
@@ -494,13 +469,13 @@ def main(args):
 
             logger.info('Whole iter step:{0} - epoch progress:{1}/{2} - total_loss:{3:.4f} - f_co_bce:{4:.4f} '
                         '- f_bg_bce: {5:.4f} - f_com_bce: {6:.4f} - f_iou: {7:.4f} - f_iou_com: {8:.4f} '
-                        '- s_co_bce:{9:.4f} - s_bg_bce: {10:.4f} - s_com_bce: {11:.4f} - s_co_1_bce: {12:.4f} '
-                        '- s_co_2_bce: {12:.4f} - s_iou:{13:.4f} - s_iou_com:{14:.4f} '
-                        ' batch_size: {15}'.format(whole_iter_num, epoch, max_epoches,
+                        '- s_co_bce:{9:.4f} - s_bg_bce: {10:.4f} - s_com_bce: {11:.4f} - s_tgfr_mid_bce: {12:.4f} '
+                        '- s_iou:{13:.4f} - s_iou_com:{14:.4f} - s_weight_bce:{15:.4f} '
+                        ' batch_size: {16}'.format(whole_iter_num, epoch, max_epoches,
                                                    loss.item(), cri.f_co_bce, cri.f_bg_bce, cri.f_com_bce,
                                                    cri.f_iou, cri.f_iou_com, cri.s_co_bce, cri.s_bg_bce,
-                                                   cri.s_com_bce, cri.s_co_1_bce, cri.s_co_2_bce,
-                                                   cri.s_iou, cri.s_iou_com, co_gts.shape[0]))
+                                                   cri.s_com_bce, cri.s_tgfr_mid_bce, cri.s_iou, cri.s_iou_com,
+                                                   cri.s_weight_bce, co_gts.shape[0]))
 
         Sm_fun = M.Smeasure()
         Em_fun = M.Emeasure()
@@ -532,10 +507,6 @@ def main(args):
                         break
                     continue
 
-                # test_group(model, group_data, save_root, max_num)
-                # flag = False
-
-        # pred_data_dir = os.path.join(save_root, dataset)
         label_data_dir = os.path.join(args.test_data_root, 'CoCA', 'GroundTruth')
         classes = os.listdir(label_data_dir)
         for k in range(len(classes)):
@@ -544,7 +515,6 @@ def main(args):
             img_list = os.listdir(os.path.join(label_data_dir, class_name))
             for l in range(len(img_list)):
                 img_name = img_list[l]
-                # print("{}/{}".format(class_name, img_name))
                 pred = cv2.imread(os.path.join(save_root, class_name, img_name), 0)
                 gt = cv2.imread(os.path.join(label_data_dir, class_name, img_name[:-4] + '.png'), 0)
                 Sm_fun.step(pred=pred / 255, gt=gt / 255)
@@ -587,4 +557,3 @@ if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device_id
     cudnn.benchmark = True
     main(args)
-
