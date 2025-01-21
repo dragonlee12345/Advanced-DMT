@@ -42,3 +42,8 @@ Download the dataset from [Baidu Driver](https://pan.baidu.com/s/192MnRSgXSDXb0l
 3. Run `python test.py`.
 4. The prediction images will be saved in `./Prediction`. 
 5. Run `python ./evaluation/eval_from_imgs.py` to evaluate the predicted results on three datasets and the evaluation scores will be written in `./evaluation/result`.
+
+## Result
+The prediction results for CoCA, CoSal2015, CoSOD3k, OWCoCA, OWCoSal, OWCoSOD can be download from [prediction](https://pan.baidu.com/s/1lxaxWPNAwha5nIEdfrGooQ?pwd=skmb) (skmb).
+### Conventional CoSOD
+
