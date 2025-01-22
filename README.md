@@ -50,7 +50,7 @@ Download the dataset from [Baidu Driver](https://pan.baidu.com/s/192MnRSgXSDXb0l
 3. The trained models with satisfactory performance will be saved in `./checkpoints/CONDA/`.
 
 ## Testing model
-1. Download our trained model from [DUTS+CoCo9k](https://pan.baidu.com/s/1YrSAz6MHwrkVmeIyiNONKQ?pwd=cqqn) (cqqn) or [DUTS+CoCoSeg](https://pan.baidu.com/s/1sGaxIvQP8gTNv42eD4XxSQ?pwd=fdgd) (fdgd) or [DUTS](https://pan.baidu.com/s/1HFLh-aNbWu6robjCGHDGog?pwd=csdc) (csdc) or [CoCo9k](https://pan.baidu.com/s/1aKHi9RhH8qqPCrtkO9Petg?pwd=s66e) (s66e) and put them into `./checkpoint` folder.
+1. Download our trained conventional model from [DUTS+CoCo9k](https://pan.baidu.com/s/1YrSAz6MHwrkVmeIyiNONKQ?pwd=cqqn) (cqqn) or [DUTS+CoCoSeg](https://pan.baidu.com/s/1sGaxIvQP8gTNv42eD4XxSQ?pwd=fdgd) (fdgd) or [DUTS](https://pan.baidu.com/s/1HFLh-aNbWu6robjCGHDGog?pwd=csdc) (csdc) or [CoCo9k](https://pan.baidu.com/s/1aKHi9RhH8qqPCrtkO9Petg?pwd=s66e) (s66e) and open-world application model from [OWDUTS+OWCoCoSeg](https://pan.baidu.com/s/1yuHmDB2OsSV5a4pX7OiECA?pwd=ccj1) (ccj1) and put them into `./checkpoint` folder.
 3. Run `python test.py`.
 4. The prediction images will be saved in `./Prediction`. 
 5. Run `python ./evaluation/eval_from_imgs.py` to evaluate the predicted results on three datasets and the evaluation scores will be written in `./evaluation/result`.
