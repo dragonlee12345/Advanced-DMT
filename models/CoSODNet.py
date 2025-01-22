@@ -9,9 +9,9 @@ class CoSODNet(nn.Module):
     def __init__(self, args, cfg, mode='train'):
         super().__init__()
 
-        # model = cfg.model
+        self.model = args.model
 
-        if args.model == 'DMT+':
+        if self.model == 'DMT+':
             from models.DMT_plus.GroupAttention import GroupAttention
             from models.DMT_plus.CoFormer_Decoder import CoFormer_Decoder
         else:
@@ -33,9 +33,10 @@ class CoSODNet(nn.Module):
 
         enc_feas = self.encoder(input)
         last_fea = enc_feas[self.last_fea_name]
-        daspp_fea = self.daspp_block(last_fea)
-        # gr_fea = self.group_att(daspp_fea)
-        enc_feas.update({self.gr_fea_name: daspp_fea})
+        gr_fea = self.daspp_block(last_fea)
+        if self.model == 'DMT+':
+            gr_fea = self.group_att(gr_fea)
+        enc_feas.update({self.gr_fea_name: gr_fea})
 
         result = self.cosod_former(enc_feas)
 
