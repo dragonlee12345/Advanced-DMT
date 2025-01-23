@@ -34,10 +34,14 @@ Download the dataset from [Baidu Driver](https://pan.baidu.com/s/192MnRSgXSDXb0l
 -- dataset
    |-- train_data
    |   |-- | CoCo9k
+   |   |-- | CoCo9k_syn
+   |   |-- |-- | naive
+   |   |-- |-- | reverse
    |   |-- | DUTS_class
    |   |-- | DUTS_class_syn
-   |   |-- |-- | img_png_seamless_cloning_add_naive
-   |   |-- |-- | img_png_seamless_cloning_add_naive_reverse_2
+   |   |-- |-- | naive
+   |   |-- |-- | reverse
+   |   |-- | CoCo_Seg
    |-- test_data
    |   |-- | CoCA
    |   |-- | CoSal2015
